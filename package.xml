@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>basalt_wrapper</name>
+  <version>0.1.0</version>
+  <description>Generic ROS 2 wrapper for Basalt VIO that subscribes to ROS image and IMU topics and publishes standard ROS odometry and debugging outputs.</description>
+  <maintainer email="caiomauro18@gmail.com">Caio Mauro</maintainer>
+  <author email="caiomauro18@gmail.com">Caio Mauro</author>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>message_filters</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>cv_bridge</depend>
+  <depend>opencv</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

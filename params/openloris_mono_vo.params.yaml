@@ -1,0 +1,20 @@
+basalt_node:
+  ros__parameters:
+    use_sim_time: true
+
+    left_image_topic: /camera/color/image_raw
+    right_image_topic: ""
+    imu_topic: /imu/data
+
+    use_imu: false
+    use_double: false
+    use_header_timestamps: true
+
+    path_frame_id: basalt_world
+    body_frame_id: basalt_body
+    publish_rate_hz: 100.0
+    max_path_length: 10000
+
+    # Replace these two paths with the actual files you want to use.
+    calib_path: /ABSOLUTE/PATH/TO/openloris_mono_calib.json
+    config_path: /ABSOLUTE/PATH/TO/mono_vo_config.json

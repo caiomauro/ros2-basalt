@@ -1,0 +1,13 @@
+build/
+install/
+log/
+.colcon/
+.vscode/
+.idea/
+*.user
+*.pyc
+__pycache__/
+compile_commands.json
+*.orig
+*.rej
+third_party/basalt/

@@ -1,0 +1,104 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Basalt Path
+      Topic:
+        Value: /basalt/path
+      Color: 25; 255; 0
+      Line Width: 0.0500000007
+      Buffer Length: 1
+    - Class: rviz_default_plugins/Pose
+      Enabled: true
+      Name: Basalt Pose
+      Topic:
+        Value: /basalt/pose
+      Shape: Arrow
+      Color: 255; 85; 0
+      Shaft Length: 0.300000012
+      Shaft Radius: 0.0299999993
+      Head Length: 0.100000001
+      Head Radius: 0.0599999987
+    - Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Name: Basalt Odometry
+      Topic:
+        Value: /basalt/odometry
+      Shape:
+        Value: Arrow
+      Keep: 100
+    - Class: rviz_default_plugins/PointCloud
+      Enabled: true
+      Name: Pose Cloud
+      Topic:
+        Value: /basalt/pose_cloud
+      Style: Flat Squares
+      Size (Pixels): 3
+      Size (m): 0.0500000007
+      Color: 0; 170; 255
+    - Class: rviz_default_plugins/PointCloud
+      Enabled: true
+      Name: Tracked Points
+      Topic:
+        Value: /basalt/tracked_points
+      Style: Points
+      Size (Pixels): 3
+      Size (m): 0.0199999996
+      Color: 255; 255; 0
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Tracking Overlay
+      Image Topic:
+        Value: /basalt/tracking_overlay
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: basalt_world
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Topic:
+        Value: /clicked_point
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 12
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Pitch: 0.785
+      Yaw: 0.785

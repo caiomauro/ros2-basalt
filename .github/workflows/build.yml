@@ -44,13 +44,7 @@ jobs:
           source /opt/ros/humble/setup.bash
           rosdep install --from-paths . --ignore-src -r -y
 
-      - name: Bootstrap Basalt
-        run: |
-          chmod +x scripts/setup_basalt.sh
-          ./scripts/setup_basalt.sh
-
       - name: Build basalt_wrapper
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --base-paths . --packages-select basalt_wrapper --cmake-clean-cache \
-            --cmake-args -DBASALT_ROOT="${GITHUB_WORKSPACE}/third_party/basalt"
+          colcon build --base-paths . --packages-select basalt_wrapper --cmake-clean-cache

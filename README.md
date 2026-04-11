@@ -26,7 +26,7 @@ consumers.
 - `src/`: wrapper node implementation
 - `launch/`: launch entrypoints
 - `params/`: reusable dataset parameter presets
-- `config/`: Basalt JSON configs and calibration references
+- `config/`: notes about expected Basalt calibration/config assets
 - `rviz/`: RViz display configuration
 
 Published topics:
@@ -77,6 +77,10 @@ You can still override the Basalt location with:
 
 ## Bootstrap Basalt
 
+The default build path now vendors Basalt automatically on the first `colcon
+build`, so you do not need to run the bootstrap script manually unless you want
+to prefetch or debug the dependency in isolation.
+
 From the package root:
 
 ```bash
@@ -119,19 +123,18 @@ IMU:
 
 ## Build
 
-Exact build command using the bundled Basalt checkout:
+Exact build command using the default vendored Basalt checkout:
 
 ```bash
-cd ~/ros2_ws
-source /opt/ros/humble/setup.bash
-cd src/basalt_wrapper
-chmod +x scripts/setup_basalt.sh
-./scripts/setup_basalt.sh
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select basalt_wrapper --cmake-clean-cache
 source install/setup.bash
 ```
+
+On the first build, `basalt_wrapper` will clone and build the pinned Basalt
+revision into `src/basalt_wrapper/third_party/basalt`. Later builds reuse that
+vendored checkout.
 
 Exact build command using an external Basalt checkout:
 
@@ -145,7 +148,11 @@ source install/setup.bash
 
 ## Launch
 
-Exact run command for EuRoC-style stereo + IMU input:
+The wrapper exposes a single generic launch entrypoint. You are expected to
+choose the topics and Basalt calibration/config files explicitly for your
+dataset or sensor rig.
+
+Example run command for EuRoC-style stereo + IMU input:
 
 ```bash
 cd ~/ros2_ws
@@ -158,18 +165,6 @@ ros2 launch basalt_wrapper basalt_node.launch.py \
   imu_topic:=/imu0 \
   calib_path:=/path/to/basalt/data/euroc_eucm_calib.json \
   config_path:=/path/to/basalt/data/euroc_config.json \
-  use_rviz:=true
-```
-
-Exact run command using the packaged EuRoC preset:
-
-```bash
-cd ~/ros2_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 launch basalt_wrapper dataset_vio.launch.py \
-  config_file:=/path/to/your/ws/src/basalt_wrapper/params/euroc_vio.params.yaml \
   use_rviz:=true
 ```
 
@@ -199,6 +194,10 @@ When the node is running, these are the main public topics and services:
 - `params/openloris_mono_vo.params.yaml`
 - `rviz/basalt_wrapper.rviz`
 
+These YAML files are examples and starting points only. They are not separate
+launch entrypoints and they do not remove the need to choose matching Basalt
+calibration and config files yourself.
+
 ## RViz
 
 Recommended displays:
@@ -215,8 +214,8 @@ Recommended fixed frame:
 
 - `basalt_world`
 
-You can launch the packaged RViz view by passing `use_rviz:=true` to either
-launch file.
+You can launch the packaged RViz view by passing `use_rviz:=true` to
+`basalt_node.launch.py`.
 
 ## Supported Inputs
 
@@ -250,7 +249,7 @@ match the actual dataset or sensor rig.
 
 ## Known Limitations
 
-- The wrapper depends on a local Basalt source/build tree instead of a system package.
+- Basalt is vendored from source on the first build; this project does not yet consume a native system package for Basalt.
 - Calibration and estimator config quality dominate output quality; the wrapper does not solve bad sensor models.
 - Basalt VIO is not loop-closing SLAM, so long trajectories can drift.
 - The package does not currently ship automated integration tests against public datasets.

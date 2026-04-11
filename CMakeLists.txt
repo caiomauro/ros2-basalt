@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(ExternalProject)
 
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -20,15 +21,21 @@ find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 
 set(BASALT_BUNDLED_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/basalt")
+option(BASALT_VENDOR_BUNDLED
+  "Automatically clone and build the pinned Basalt dependency into third_party/basalt."
+  ON)
 set(BASALT_ROOT "$ENV{BASALT_ROOT}" CACHE PATH
-    "Path to a local Basalt checkout containing build/relwithdebinfo")
+    "Path to an existing Basalt checkout containing build/relwithdebinfo")
 if(NOT BASALT_ROOT)
-  if(EXISTS "${BASALT_BUNDLED_ROOT}")
+  if(BASALT_VENDOR_BUNDLED)
     set(BASALT_ROOT "${BASALT_BUNDLED_ROOT}")
   else()
-    set(BASALT_ROOT "$ENV{HOME}/basalt")
+    message(FATAL_ERROR
+      "BASALT_ROOT was not provided and BASALT_VENDOR_BUNDLED is OFF. Either "
+      "set -DBASALT_ROOT=/path/to/basalt or enable BASALT_VENDOR_BUNDLED.")
   endif()
 endif()
+
 set(BASALT_BUILD_DIR "${BASALT_ROOT}/build/relwithdebinfo")
 set(BASALT_INCLUDE_DIR "${BASALT_ROOT}/include")
 set(BASALT_THIRDPARTY_DIR "${BASALT_ROOT}/thirdparty")
@@ -38,19 +45,35 @@ set(BASALT_VCPKG_EIGEN_DIR "${BASALT_VCPKG_INCLUDE_DIR}/eigen3")
 set(BASALT_VCPKG_LIB_DIR "${BASALT_BUILD_DIR}/vcpkg_installed/x64-linux/lib")
 set(BASALT_LIBRARY "${BASALT_BUILD_DIR}/libbasalt.so")
 
-if(NOT EXISTS "${BASALT_LIBRARY}")
-  message(FATAL_ERROR
-    "Basalt library not found at ${BASALT_LIBRARY}. Build Basalt first in "
-    "${BASALT_ROOT}/build/relwithdebinfo, run scripts/setup_basalt.sh, or pass "
-    "-DBASALT_ROOT=/path/to/basalt.")
+set(BASALT_EXPECTS_VENDOR_BUILD OFF)
+if(BASALT_VENDOR_BUNDLED AND "${BASALT_ROOT}" STREQUAL "${BASALT_BUNDLED_ROOT}")
+  set(BASALT_EXPECTS_VENDOR_BUILD ON)
 endif()
 
-set(EIGEN_INCLUDE_DIR_HINTS
-    "${BASALT_VCPKG_EIGEN_DIR}"
-    "${BASALT_VCPKG_INCLUDE_DIR}"
-)
+if(BASALT_EXPECTS_VENDOR_BUILD)
+  find_program(BASH_EXECUTABLE bash REQUIRED)
+  ExternalProject_Add(basalt_vendor
+    SOURCE_DIR "${BASALT_BUNDLED_ROOT}"
+    DOWNLOAD_COMMAND ""
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/setup_basalt.sh"
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS
+      "${BASALT_LIBRARY}"
+      "${BASALT_VCPKG_LIB_DIR}/libtbb.so"
+    USES_TERMINAL_BUILD TRUE
+  )
+  message(STATUS
+    "Basalt will be vendored automatically into ${BASALT_BUNDLED_ROOT} during build.")
+elseif(NOT EXISTS "${BASALT_LIBRARY}")
+  message(FATAL_ERROR
+    "Basalt library not found at ${BASALT_LIBRARY}. Build Basalt first in "
+    "${BASALT_ROOT}/build/relwithdebinfo or pass -DBASALT_ROOT=/path/to/basalt.")
+endif()
 
-if(EXISTS "${BASALT_VCPKG_EIGEN_DIR}/Eigen/Core")
+if(BASALT_EXPECTS_VENDOR_BUILD)
+  set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_EIGEN_DIR}")
+elseif(EXISTS "${BASALT_VCPKG_EIGEN_DIR}/Eigen/Core")
   set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_EIGEN_DIR}")
 elseif(EXISTS "${BASALT_VCPKG_INCLUDE_DIR}/eigen3/Eigen/Core")
   set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_INCLUDE_DIR}/eigen3")
@@ -62,14 +85,18 @@ endif()
 
 message(STATUS "Using Eigen headers from ${EIGEN3_INCLUDE_DIR}")
 
-find_library(TBB_LIBRARY
-  NAMES tbb
-  HINTS "${BASALT_VCPKG_LIB_DIR}" "/usr/lib/x86_64-linux-gnu"
-  NO_DEFAULT_PATH
-)
+if(BASALT_EXPECTS_VENDOR_BUILD AND NOT EXISTS "${BASALT_VCPKG_LIB_DIR}/libtbb.so")
+  set(TBB_LIBRARY "${BASALT_VCPKG_LIB_DIR}/libtbb.so")
+else()
+  find_library(TBB_LIBRARY
+    NAMES tbb
+    HINTS "${BASALT_VCPKG_LIB_DIR}" "/usr/lib/x86_64-linux-gnu"
+    NO_DEFAULT_PATH
+  )
 
-if(NOT TBB_LIBRARY)
-  find_library(TBB_LIBRARY NAMES tbb REQUIRED)
+  if(NOT TBB_LIBRARY)
+    find_library(TBB_LIBRARY NAMES tbb REQUIRED)
+  endif()
 endif()
 
 add_executable(basalt_node
@@ -123,6 +150,10 @@ target_link_libraries(basalt_node
   "${TBB_LIBRARY}"
   ${OpenCV_LIBS}
 )
+
+if(TARGET basalt_vendor)
+  add_dependencies(basalt_node basalt_vendor)
+endif()
 
 set_target_properties(basalt_node PROPERTIES
   BUILD_RPATH "${BASALT_BUILD_DIR};${BASALT_VCPKG_LIB_DIR}"

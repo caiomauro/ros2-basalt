@@ -12,6 +12,7 @@ def generate_launch_description():
     imu_topic = LaunchConfiguration("imu_topic")
     calib_path = LaunchConfiguration("calib_path")
     config_path = LaunchConfiguration("config_path")
+    trajectory_output_path = LaunchConfiguration("trajectory_output_path")
     publish_rate_hz = LaunchConfiguration("publish_rate_hz")
     path_frame_id = LaunchConfiguration("path_frame_id")
     body_frame_id = LaunchConfiguration("body_frame_id")
@@ -29,6 +30,7 @@ def generate_launch_description():
     cy = LaunchConfiguration("cy")
     imu_to_cam_translation = LaunchConfiguration("imu_to_cam_translation")
     imu_to_cam_rotation_wxyz = LaunchConfiguration("imu_to_cam_rotation_wxyz")
+    use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
 
@@ -39,6 +41,7 @@ def generate_launch_description():
             DeclareLaunchArgument("imu_topic", default_value="/imu/data"),
             DeclareLaunchArgument("calib_path", default_value=""),
             DeclareLaunchArgument("config_path", default_value=""),
+            DeclareLaunchArgument("trajectory_output_path", default_value=""),
             DeclareLaunchArgument("publish_rate_hz", default_value="100.0"),
             DeclareLaunchArgument("path_frame_id", default_value="basalt_world"),
             DeclareLaunchArgument("body_frame_id", default_value="basalt_body"),
@@ -60,6 +63,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "imu_to_cam_rotation_wxyz", default_value="[0.5, -0.5, 0.5, -0.5]"
             ),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument(
                 "rviz_config",
@@ -80,6 +84,7 @@ def generate_launch_description():
                         "imu_topic": imu_topic,
                         "calib_path": calib_path,
                         "config_path": config_path,
+                        "trajectory_output_path": trajectory_output_path,
                         "publish_rate_hz": publish_rate_hz,
                         "path_frame_id": path_frame_id,
                         "body_frame_id": body_frame_id,
@@ -97,6 +102,7 @@ def generate_launch_description():
                         "cy": cy,
                         "imu_to_cam_translation": imu_to_cam_translation,
                         "imu_to_cam_rotation_wxyz": imu_to_cam_rotation_wxyz,
+                        "use_sim_time": use_sim_time,
                     }
                 ],
             ),
@@ -106,6 +112,7 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_config],
+                parameters=[{"use_sim_time": use_sim_time}],
                 condition=IfCondition(use_rviz),
             ),
         ]

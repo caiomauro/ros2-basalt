@@ -15,7 +15,6 @@ Basalt. It does not contain:
 
 - PX4-specific bridges
 - loop closure or SLAM
-- dataset conversion tooling
 - simulator-specific glue code
 
 That separation keeps the wrapper reusable across bags, robots, and downstream
@@ -146,11 +145,46 @@ colcon build --packages-select basalt_wrapper --cmake-clean-cache \
 source install/setup.bash
 ```
 
+## Current Accuracy Status
+
+Current measured results on EuRoC `V1_02_medium`:
+
+- native `basalt_vio` on the original EuRoC folder:
+  - `APE RMSE = 0.045336 m`
+- `basalt_wrapper` on the offline-converted rosbag2:
+  - best observed run so far:
+    - `APE RMSE = 2.219359 m`
+  - additional recent runs:
+    - `APE RMSE = 3.586488 m`
+    - `APE RMSE = 6.432690 m`
+
+Interpretation:
+
+- native Basalt is working correctly on the dataset
+- the wrapper is much better than the earlier tens-to-thousands-of-meters failure
+  mode
+- the wrapper is still materially worse than native Basalt and should not yet be
+  treated as numerically equivalent for evaluation
+
+These numbers are here to document the current state of the integration, not as
+an acceptance target.
+
 ## Launch
 
 The wrapper exposes a single generic launch entrypoint. You are expected to
 choose the topics and Basalt calibration/config files explicitly for your
 dataset or sensor rig.
+
+For EuRoC MAV, use the same Basalt calibration and config files that native
+`basalt_vio` uses:
+
+- `data/euroc_eucm_calib.json`
+- `data/euroc_config.json`
+
+The difference is only the input transport:
+
+- native Basalt reads directly from a dataset folder
+- `basalt_wrapper` reads the same data through ROS 2 topics from a played bag
 
 Example run command for EuRoC-style stereo + IMU input:
 
@@ -163,16 +197,193 @@ ros2 launch basalt_wrapper basalt_node.launch.py \
   left_image_topic:=/cam0/image_raw \
   right_image_topic:=/cam1/image_raw \
   imu_topic:=/imu0 \
-  calib_path:=/path/to/basalt/data/euroc_eucm_calib.json \
-  config_path:=/path/to/basalt/data/euroc_config.json \
+  calib_path:=$HOME/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_eucm_calib.json \
+  config_path:=$HOME/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_config.json \
   use_rviz:=true
 ```
 
 Then replay your bag in a second terminal:
 
 ```bash
-ros2 bag play /path/to/bag_folder --storage sqlite3 --clock
+ros2 bag play /path/to/euroc_rosbag2_folder --storage sqlite3 --clock
 ```
+
+## EuRoC Conversion
+
+For fidelity-critical evaluation, do not use the live replay-and-record helper as
+your primary conversion path. The preferred path is the offline converter below,
+because it writes the original EuRoC timestamps directly into both:
+
+- `msg.header.stamp`
+- the rosbag2 message write timestamp
+
+and it writes all topics in one globally timestamp-sorted stream.
+
+### Preferred: Offline EuRoC to rosbag2
+
+This package ships an offline converter that writes:
+
+- `/cam0/image_raw`
+- `/cam0/camera_info`
+- `/cam1/image_raw`
+- `/cam1/camera_info`
+- `/imu0`
+
+from an original EuRoC `mav0` folder or sequence root.
+
+Example:
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 run basalt_wrapper euroc_to_rosbag2 \
+  --ros-args \
+  -p dataset_path:=/home/caio/vicon_room1/vicon_room1/V1_02_medium \
+  -p output_uri:=/home/caio/V1_02_medium_offline_ros2 \
+  -p storage_id:=sqlite3
+```
+
+Then inspect the generated bag:
+
+```bash
+ros2 bag info /home/caio/V1_02_medium_offline_ros2
+```
+
+Replay it into the wrapper with simulated time:
+
+```bash
+ros2 bag play /home/caio/V1_02_medium_offline_ros2 --clock
+```
+
+## End-to-End EuRoC Workflow
+
+This is the current recommended EuRoC workflow for `V1_02_medium`.
+
+### 1. Build
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select basalt_wrapper --cmake-clean-cache
+source install/setup.bash
+```
+
+### 2. Convert the original EuRoC dataset offline
+
+```bash
+rm -rf /home/caio/V1_02_medium_offline_ros2
+
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 run basalt_wrapper euroc_to_rosbag2 \
+  --ros-args \
+  -p dataset_path:=/home/caio/vicon_room1/vicon_room1/V1_02_medium \
+  -p output_uri:=/home/caio/V1_02_medium_offline_ros2 \
+  -p storage_id:=sqlite3
+```
+
+### 3. Verify the bag
+
+```bash
+ros2 bag info /home/caio/V1_02_medium_offline_ros2
+```
+
+Expected topics:
+
+- `/cam0/image_raw`
+- `/cam0/camera_info`
+- `/cam1/image_raw`
+- `/cam1/camera_info`
+- `/imu0`
+
+### 4. Run the wrapper on the offline bag
+
+Terminal 1:
+
+```bash
+rm -f /home/caio/wrapper_estimated.tum
+
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch basalt_wrapper basalt_node.launch.py \
+  left_image_topic:=/cam0/image_raw \
+  right_image_topic:=/cam1/image_raw \
+  imu_topic:=/imu0 \
+  calib_path:=/home/caio/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_eucm_calib.json \
+  config_path:=/home/caio/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_config.json \
+  trajectory_output_path:=/home/caio/wrapper_estimated.tum \
+  use_rviz:=true \
+  use_sim_time:=true
+```
+
+Terminal 2:
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 bag play /home/caio/V1_02_medium_offline_ros2 --clock
+```
+
+### 5. Compare wrapper output to ground truth
+
+```bash
+awk 'NF == 8 {print $0}' /home/caio/wrapper_estimated.tum > /home/caio/wrapper_estimated_clean.tum
+source ~/evo-venv/bin/activate
+evo_ape tum /home/caio/groundtruth.tum /home/caio/wrapper_estimated_clean.tum --align
+```
+
+### 6. Native Basalt baseline
+
+```bash
+/home/caio/ros2_ws/src/basalt_wrapper/third_party/basalt/build/relwithdebinfo/basalt_vio \
+  --dataset-path /home/caio/vicon_room1/vicon_room1/V1_02_medium \
+  --dataset-type euroc \
+  --cam-calib /home/caio/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_eucm_calib.json \
+  --config-path /home/caio/ros2_ws/src/basalt_wrapper/third_party/basalt/data/euroc_config.json \
+  --show-gui true \
+  --use-imu true
+```
+
+### Legacy: Live Replay Helper
+
+The package also ships a small EuRoC replay helper so you can publish an
+original EuRoC MAV folder as ROS 2 topics and record it into a rosbag2.
+This is convenient for quick inspection, but it is less faithful than the
+offline converter because it introduces ROS scheduling into the conversion path.
+
+Replay the original dataset:
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 run basalt_wrapper euroc_replay_node \
+  --ros-args \
+  -p dataset_path:=/home/caio/vicon_room1/vicon_room1/V1_02_medium
+```
+
+Then record the topics in another terminal:
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 bag record /cam0/image_raw /cam1/image_raw /imu0 \
+  -o /home/caio/V1_02_medium_ros2
+```
+
+That bag can then be replayed into `basalt_wrapper` with the standard launch
+file.
 
 ## Expected Topics
 

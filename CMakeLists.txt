@@ -7,9 +7,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(ExternalProject)
 
 find_package(ament_cmake REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -21,6 +21,8 @@ find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 
 set(BASALT_BUNDLED_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/basalt")
+set(BASALT_REPO_URL "https://github.com/VladyslavUsenko/basalt.git")
+set(BASALT_COMMIT "0f3b2b52c807f70ff4e2973ce253c73329eea7bc")
 option(BASALT_VENDOR_BUNDLED
   "Automatically clone and build the pinned Basalt dependency into third_party/basalt."
   ON)
@@ -37,66 +39,94 @@ if(NOT BASALT_ROOT)
 endif()
 
 set(BASALT_BUILD_DIR "${BASALT_ROOT}/build/relwithdebinfo")
-set(BASALT_INCLUDE_DIR "${BASALT_ROOT}/include")
 set(BASALT_THIRDPARTY_DIR "${BASALT_ROOT}/thirdparty")
 set(BASALT_VCPKG_INCLUDE_DIR
     "${BASALT_BUILD_DIR}/vcpkg_installed/x64-linux/include")
 set(BASALT_VCPKG_EIGEN_DIR "${BASALT_VCPKG_INCLUDE_DIR}/eigen3")
 set(BASALT_VCPKG_LIB_DIR "${BASALT_BUILD_DIR}/vcpkg_installed/x64-linux/lib")
-set(BASALT_LIBRARY "${BASALT_BUILD_DIR}/libbasalt.so")
-
 set(BASALT_EXPECTS_VENDOR_BUILD OFF)
 if(BASALT_VENDOR_BUNDLED AND "${BASALT_ROOT}" STREQUAL "${BASALT_BUNDLED_ROOT}")
   set(BASALT_EXPECTS_VENDOR_BUILD ON)
 endif()
 
+if(BASALT_EXPECTS_VENDOR_BUILD AND NOT EXISTS "${BASALT_BUNDLED_ROOT}/include")
+  find_program(GIT_EXECUTABLE git REQUIRED)
+  message(STATUS "Fetching Basalt source into ${BASALT_BUNDLED_ROOT}")
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" clone --recursive "${BASALT_REPO_URL}" "${BASALT_BUNDLED_ROOT}"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" -C "${BASALT_BUNDLED_ROOT}" checkout "${BASALT_COMMIT}"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" -C "${BASALT_BUNDLED_ROOT}" submodule update --init --recursive
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+endif()
+
+set(BASALT_PUBLIC_INCLUDE_DIR "${BASALT_ROOT}/include")
+set(BASALT_SOURCE_ROOT_INCLUDE_DIR "${BASALT_ROOT}")
+
+set(BASALT_HEADER_INCLUDE_DIRS "")
+foreach(candidate
+    "${BASALT_PUBLIC_INCLUDE_DIR}"
+    "${BASALT_VCPKG_INCLUDE_DIR}"
+    "${BASALT_SOURCE_ROOT_INCLUDE_DIR}"
+)
+  if(EXISTS "${candidate}")
+    list(APPEND BASALT_HEADER_INCLUDE_DIRS "${candidate}")
+  endif()
+endforeach()
+
+if(NOT BASALT_EXPECTS_VENDOR_BUILD)
+  if(NOT EXISTS "${BASALT_PUBLIC_INCLUDE_DIR}/basalt/optical_flow/optical_flow.h")
+    message(FATAL_ERROR
+      "Could not find basalt/optical_flow/optical_flow.h under ${BASALT_PUBLIC_INCLUDE_DIR}.")
+  endif()
+  if(NOT EXISTS "${BASALT_VCPKG_INCLUDE_DIR}/basalt/calibration/calibration.hpp"
+     AND NOT EXISTS "${BASALT_PUBLIC_INCLUDE_DIR}/basalt/calibration/calibration.hpp"
+     AND NOT EXISTS "${BASALT_SOURCE_ROOT_INCLUDE_DIR}/basalt/calibration/calibration.hpp")
+    message(FATAL_ERROR
+      "Could not find basalt/calibration/calibration.hpp under ${BASALT_ROOT}. "
+      "Checked ${BASALT_PUBLIC_INCLUDE_DIR}, ${BASALT_VCPKG_INCLUDE_DIR}, and ${BASALT_SOURCE_ROOT_INCLUDE_DIR}.")
+  endif()
+endif()
+
+message(STATUS "Using Basalt include search roots: ${BASALT_HEADER_INCLUDE_DIRS}")
+
 if(BASALT_EXPECTS_VENDOR_BUILD)
   find_program(BASH_EXECUTABLE bash REQUIRED)
-  ExternalProject_Add(basalt_vendor
-    SOURCE_DIR "${BASALT_BUNDLED_ROOT}"
-    DOWNLOAD_COMMAND ""
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/setup_basalt.sh"
-    INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS
-      "${BASALT_LIBRARY}"
-      "${BASALT_VCPKG_LIB_DIR}/libtbb.so"
-    USES_TERMINAL_BUILD TRUE
-  )
-  message(STATUS
-    "Basalt will be vendored automatically into ${BASALT_BUNDLED_ROOT} during build.")
-elseif(NOT EXISTS "${BASALT_LIBRARY}")
+  if(NOT EXISTS "${BASALT_BUILD_DIR}/libbasalt.so"
+     OR NOT EXISTS "${BASALT_VCPKG_INCLUDE_DIR}/basalt/calibration/calibration.hpp")
+    message(STATUS
+      "Bootstrapping vendored Basalt into ${BASALT_BUNDLED_ROOT} during configure.")
+    execute_process(
+      COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/setup_basalt.sh"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+  endif()
+elseif(NOT EXISTS "${BASALT_BUILD_DIR}/libbasalt.so")
   message(FATAL_ERROR
-    "Basalt library not found at ${BASALT_LIBRARY}. Build Basalt first in "
+    "Basalt library not found at ${BASALT_BUILD_DIR}/libbasalt.so. Build Basalt first in "
     "${BASALT_ROOT}/build/relwithdebinfo or pass -DBASALT_ROOT=/path/to/basalt.")
 endif()
 
-if(BASALT_EXPECTS_VENDOR_BUILD)
-  set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_EIGEN_DIR}")
-elseif(EXISTS "${BASALT_VCPKG_EIGEN_DIR}/Eigen/Core")
+if(EXISTS "${BASALT_VCPKG_EIGEN_DIR}/Eigen/Core")
   set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_EIGEN_DIR}")
 elseif(EXISTS "${BASALT_VCPKG_INCLUDE_DIR}/eigen3/Eigen/Core")
   set(EIGEN3_INCLUDE_DIR "${BASALT_VCPKG_INCLUDE_DIR}/eigen3")
 else()
-  message(FATAL_ERROR
-    "Could not locate Eigen headers in Basalt local vcpkg tree. Checked "
-    "${BASALT_VCPKG_EIGEN_DIR} and ${BASALT_VCPKG_INCLUDE_DIR}/eigen3")
+  set(EIGEN3_INCLUDE_DIR "")
 endif()
 
-message(STATUS "Using Eigen headers from ${EIGEN3_INCLUDE_DIR}")
-
-if(BASALT_EXPECTS_VENDOR_BUILD AND NOT EXISTS "${BASALT_VCPKG_LIB_DIR}/libtbb.so")
-  set(TBB_LIBRARY "${BASALT_VCPKG_LIB_DIR}/libtbb.so")
+if(EIGEN3_INCLUDE_DIR)
+  message(STATUS "Using Basalt-provided Eigen headers from ${EIGEN3_INCLUDE_DIR}")
 else()
-  find_library(TBB_LIBRARY
-    NAMES tbb
-    HINTS "${BASALT_VCPKG_LIB_DIR}" "/usr/lib/x86_64-linux-gnu"
-    NO_DEFAULT_PATH
-  )
-
-  if(NOT TBB_LIBRARY)
-    find_library(TBB_LIBRARY NAMES tbb REQUIRED)
-  endif()
+  message(STATUS "Using system Eigen3 headers")
 endif()
 
 add_executable(basalt_node
@@ -113,11 +143,10 @@ target_include_directories(basalt_node PRIVATE
 )
 
 target_include_directories(basalt_node SYSTEM PRIVATE
-  "${BASALT_INCLUDE_DIR}"
+  ${BASALT_HEADER_INCLUDE_DIRS}
   "${BASALT_THIRDPARTY_DIR}"
   "${BASALT_VCPKG_INCLUDE_DIR}"
   "${BASALT_VCPKG_EIGEN_DIR}"
-  "${EIGEN3_INCLUDE_DIR}"
 )
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -146,14 +175,10 @@ target_link_directories(basalt_node PRIVATE
 )
 
 target_link_libraries(basalt_node
-  "${BASALT_LIBRARY}"
-  "${TBB_LIBRARY}"
+  Eigen3::Eigen
+  basalt
   ${OpenCV_LIBS}
 )
-
-if(TARGET basalt_vendor)
-  add_dependencies(basalt_node basalt_vendor)
-endif()
 
 set_target_properties(basalt_node PROPERTIES
   BUILD_RPATH "${BASALT_BUILD_DIR};${BASALT_VCPKG_LIB_DIR}"
@@ -162,6 +187,18 @@ set_target_properties(basalt_node PROPERTIES
 
 install(TARGETS basalt_node
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/euroc_to_rosbag2.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME euroc_to_rosbag2
+)
+
+install(PROGRAMS
+  scripts/euroc_replay_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME euroc_replay_node
 )
 
 install(DIRECTORY launch

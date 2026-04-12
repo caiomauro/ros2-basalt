@@ -20,9 +20,21 @@ void BasaltNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
   }
 
   auto imu = std::make_shared<basalt::ImuData<double>>();
-  const int64_t imu_t_ns =
+  const int64_t candidate_imu_t_ns =
       use_header_timestamps_ ? rosTimeToNs(msg->header.stamp) : steadyNowNs();
-  imu->t_ns = nextMonotonicImuTimeNs(imu_t_ns);
+  if (!acceptImuTimestampNs(candidate_imu_t_ns, imu->t_ns)) {
+    ++imu_dropped_out_of_order_;
+    if (imu_dropped_out_of_order_ <= 5 ||
+        imu_dropped_out_of_order_ % 500 == 0) {
+      RCLCPP_WARN(
+          get_logger(),
+          "dropping out-of-order imu sample stamp=%lld last_imu_t_ns=%lld dropped=%zu",
+          static_cast<long long>(candidate_imu_t_ns),
+          static_cast<long long>(last_imu_input_t_ns_),
+          imu_dropped_out_of_order_);
+    }
+    return;
+  }
 
   const Eigen::Vector3d raw_gyro(msg->angular_velocity.x,
                                  msg->angular_velocity.y,
@@ -33,8 +45,8 @@ void BasaltNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
   imu->gyro = raw_gyro;
   imu->accel = raw_accel;
 
-  storeLatestImuDebug(raw_gyro, raw_accel, imu->gyro, imu->accel, imu->t_ns);
-
   vio_->imu_data_queue.push(imu);
+  storeLatestImuDebug(raw_gyro, raw_accel, imu->gyro, imu->accel, imu->t_ns);
+  latest_imu_cv_.notify_all();
   ++imu_received_;
 }

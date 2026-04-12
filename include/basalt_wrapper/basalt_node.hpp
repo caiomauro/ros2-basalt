@@ -32,10 +32,14 @@
 #include <tbb/concurrent_queue.h>
 
 #include <array>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -55,8 +59,8 @@ class BasaltNode final : public rclcpp::Node {
                                                   double angular);
 
   int64_t imageTimestampNs(const builtin_interfaces::msg::Time &stamp) const;
-  int64_t nextMonotonicImageTimeNs(int64_t candidate_ns);
-  int64_t nextMonotonicImuTimeNs(int64_t candidate_ns);
+  bool acceptImageTimestampNs(int64_t candidate_ns, int64_t &accepted_ns);
+  bool acceptImuTimestampNs(int64_t candidate_ns, int64_t &accepted_ns);
 
   std::string formatVector(const Eigen::Vector3d &v) const;
   std::string formatQuat(const Eigen::Quaterniond &q) const;
@@ -89,9 +93,11 @@ class BasaltNode final : public rclcpp::Node {
                            int64_t input_t_ns);
   void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
 
-  void processQueuesAndPublish();
+  void opticalFlowOutputLoop();
+  void estimatorOutputLoop();
   void publishOdometry(const basalt::PoseVelBiasState<double> &state);
   void publishPath(const basalt::PoseVelBiasState<double> &state);
+  void recordTrajectory(const basalt::PoseVelBiasState<double> &state);
   void handleDebugSnapshot(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
       std::shared_ptr<std_srvs::srv::Trigger::Response> response);
@@ -101,6 +107,7 @@ class BasaltNode final : public rclcpp::Node {
   std::string imu_topic_;
   std::string calib_path_;
   std::string config_path_;
+  std::string trajectory_output_path_;
   std::string path_frame_id_{"basalt_world"};
   std::string body_frame_id_{"basalt_body"};
   double publish_rate_hz_{100.0};
@@ -128,11 +135,13 @@ class BasaltNode final : public rclcpp::Node {
   tbb::concurrent_bounded_queue<basalt::OpticalFlowResult::Ptr> opt_flow_out_queue_;
   tbb::concurrent_bounded_queue<basalt::PoseVelBiasState<double>::Ptr> out_state_queue_;
   basalt::PoseVelBiasState<double>::Ptr latest_state_;
+  std::deque<basalt::OpticalFlowResult::Ptr> pending_vision_results_;
 
   std::mutex latest_imu_mutex_;
   std::mutex latest_state_mutex_;
   std::mutex timestamp_mutex_;
   std::mutex image_headers_mutex_;
+  std::condition_variable latest_imu_cv_;
   std::unordered_map<int64_t, std_msgs::msg::Header> image_headers_by_t_ns_;
   Eigen::Vector3d latest_gyro_body_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d latest_raw_imu_accel_{Eigen::Vector3d::Zero()};
@@ -147,6 +156,12 @@ class BasaltNode final : public rclcpp::Node {
   size_t images_received_{0};
   size_t imu_received_{0};
   size_t odom_published_{0};
+  size_t images_dropped_out_of_order_{0};
+  size_t imu_dropped_out_of_order_{0};
+  int64_t last_recorded_state_t_ns_{-1};
+
+  std::mutex trajectory_file_mutex_;
+  std::ofstream trajectory_file_;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>>
@@ -163,7 +178,8 @@ class BasaltNode final : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr tracking_overlay_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud>::SharedPtr tracked_points_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr debug_snapshot_srv_;
-  rclcpp::TimerBase::SharedPtr state_timer_;
   nav_msgs::msg::Path path_msg_;
   sensor_msgs::msg::PointCloud pose_cloud_msg_;
+  std::thread optical_flow_thread_;
+  std::thread estimator_thread_;
 };

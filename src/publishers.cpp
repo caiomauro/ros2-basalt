@@ -2,24 +2,48 @@
 
 #include <algorithm>
 
-void BasaltNode::processQueuesAndPublish() {
-  basalt::OpticalFlowResult::Ptr flow_result;
-  while (opt_flow_out_queue_.try_pop(flow_result)) {
-    if (flow_result) {
-      publishOpticalFlowDebug(flow_result);
-      vio_->vision_data_queue.push(flow_result);
-    }
-  }
+void BasaltNode::opticalFlowOutputLoop() {
+  while (!shutting_down_) {
+    basalt::OpticalFlowResult::Ptr flow_result;
+    opt_flow_out_queue_.pop(flow_result);
 
-  basalt::PoseVelBiasState<double>::Ptr state;
-  while (out_state_queue_.try_pop(state)) {
-    if (state) {
-      latest_state_ = state;
+    if (shutting_down_) {
+      break;
     }
-  }
+    if (!flow_result) {
+      continue;
+    }
 
-  if (latest_state_) {
-    publishOdometry(*latest_state_);
+    publishOpticalFlowDebug(flow_result);
+
+    if (use_imu_) {
+      std::unique_lock<std::mutex> lock(latest_imu_mutex_);
+      latest_imu_cv_.wait(lock, [&] {
+        return shutting_down_ || latest_imu_t_ns_ >= flow_result->t_ns;
+      });
+      if (shutting_down_) {
+        break;
+      }
+    }
+
+    vio_->vision_data_queue.push(flow_result);
+  }
+}
+
+void BasaltNode::estimatorOutputLoop() {
+  while (!shutting_down_) {
+    basalt::PoseVelBiasState<double>::Ptr state;
+    out_state_queue_.pop(state);
+
+    if (shutting_down_) {
+      break;
+    }
+    if (!state) {
+      continue;
+    }
+
+    latest_state_ = state;
+    publishOdometry(*state);
   }
 }
 
@@ -60,6 +84,7 @@ void BasaltNode::publishOdometry(const basalt::PoseVelBiasState<double> &state) 
   odom.twist.covariance = twist_cov;
 
   odom_pub_->publish(odom);
+  recordTrajectory(state);
   publishPath(state);
   ++odom_published_;
   if (odom_published_ % 50 == 0) {
@@ -68,6 +93,29 @@ void BasaltNode::publishOdometry(const basalt::PoseVelBiasState<double> &state) 
                 odom_published_, static_cast<long long>(state.t_ns),
                 path_msg_.poses.size());
   }
+}
+
+void BasaltNode::recordTrajectory(const basalt::PoseVelBiasState<double> &state) {
+  if (!trajectory_file_.is_open()) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(trajectory_file_mutex_);
+  if (state.t_ns == last_recorded_state_t_ns_) {
+    return;
+  }
+  last_recorded_state_t_ns_ = state.t_ns;
+
+  const Eigen::Vector3d translation = state.T_w_i.translation();
+  const Eigen::Quaterniond orientation(state.T_w_i.unit_quaternion());
+
+  trajectory_file_.setf(std::ios::fixed);
+  trajectory_file_.precision(9);
+  trajectory_file_ << static_cast<double>(state.t_ns) / 1e9 << " "
+                   << translation.x() << " " << translation.y() << " "
+                   << translation.z() << " " << orientation.x() << " "
+                   << orientation.y() << " " << orientation.z() << " "
+                   << orientation.w() << "\n";
 }
 
 void BasaltNode::publishPath(const basalt::PoseVelBiasState<double> &state) {

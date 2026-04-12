@@ -188,8 +188,20 @@ basalt::OpticalFlowInput::Ptr BasaltNode::makeOpticalFlowInput(
   }
 
   auto input = std::make_shared<basalt::OpticalFlowInput>();
-  input->t_ns =
-      nextMonotonicImageTimeNs(imageTimestampNs(msgs.front()->header.stamp));
+  const int64_t candidate_t_ns = imageTimestampNs(msgs.front()->header.stamp);
+  if (!acceptImageTimestampNs(candidate_t_ns, input->t_ns)) {
+    ++images_dropped_out_of_order_;
+    if (images_dropped_out_of_order_ <= 5 ||
+        images_dropped_out_of_order_ % 100 == 0) {
+      RCLCPP_WARN(
+          get_logger(),
+          "dropping out-of-order image frame stamp=%lld last_image_t_ns=%lld dropped=%zu",
+          static_cast<long long>(candidate_t_ns),
+          static_cast<long long>(last_image_t_ns_),
+          images_dropped_out_of_order_);
+    }
+    return nullptr;
+  }
   input->img_data.resize(msgs.size());
   debug_header = msgs.front()->header;
   rememberImageHeader(input->t_ns, debug_header);

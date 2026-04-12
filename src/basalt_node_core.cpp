@@ -19,6 +19,8 @@ BasaltNode::BasaltNode() : rclcpp::Node("basalt_node") {
   imu_topic_ = declare_parameter<std::string>("imu_topic", "/imu/data");
   calib_path_ = declare_parameter<std::string>("calib_path", "");
   config_path_ = declare_parameter<std::string>("config_path", "");
+  trajectory_output_path_ =
+      declare_parameter<std::string>("trajectory_output_path", "");
   publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", 100.0);
   path_frame_id_ =
       declare_parameter<std::string>("path_frame_id", "basalt_world");
@@ -87,8 +89,9 @@ BasaltNode::BasaltNode() : rclcpp::Node("basalt_node") {
   }
 
   if (expected_cameras_ == 1) {
+    auto image_qos = rclcpp::QoS(rclcpp::KeepLast(200)).reliable();
     image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-        left_image_topic_, rclcpp::SensorDataQoS(),
+        left_image_topic_, image_qos,
         std::bind(&BasaltNode::imageCallback, this, std::placeholders::_1));
     RCLCPP_INFO(get_logger(), "subscribing to mono image topic: %s",
                 left_image_topic_.c_str());
@@ -97,12 +100,14 @@ BasaltNode::BasaltNode() : rclcpp::Node("basalt_node") {
       throw std::invalid_argument(
           "right_image_topic must be set for a 2-camera calibration");
     }
+    const auto image_qos =
+        rclcpp::QoS(rclcpp::KeepLast(200)).reliable().get_rmw_qos_profile();
     left_image_sub_filter_ =
         std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Image>>(
-            this, left_image_topic_);
+            this, left_image_topic_, image_qos);
     right_image_sub_filter_ =
         std::make_shared<message_filters::Subscriber<sensor_msgs::msg::Image>>(
-            this, right_image_topic_);
+            this, right_image_topic_, image_qos);
     stereo_sync_ = std::make_shared<StereoSync>(
         *left_image_sub_filter_, *right_image_sub_filter_, 100);
     stereo_sync_->registerCallback(std::bind(&BasaltNode::stereoImageCallback,
@@ -113,15 +118,16 @@ BasaltNode::BasaltNode() : rclcpp::Node("basalt_node") {
   }
 
   if (use_imu_) {
+    auto imu_qos = rclcpp::QoS(rclcpp::KeepLast(2000)).reliable();
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-        imu_topic_, rclcpp::SensorDataQoS(),
+        imu_topic_, imu_qos,
         std::bind(&BasaltNode::imuCallback, this, std::placeholders::_1));
     RCLCPP_INFO(get_logger(), "subscribing to IMU topic: %s",
                 imu_topic_.c_str());
   }
 
   odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-      "/basalt/odometry", rclcpp::SensorDataQoS());
+      "/basalt/odometry", rclcpp::QoS(10));
   path_pub_ =
       create_publisher<nav_msgs::msg::Path>("/basalt/path", rclcpp::QoS(10));
   pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
@@ -138,15 +144,25 @@ BasaltNode::BasaltNode() : rclcpp::Node("basalt_node") {
   path_msg_.header.frame_id = path_frame_id_;
   pose_cloud_msg_.header.frame_id = path_frame_id_;
 
+  if (!trajectory_output_path_.empty()) {
+    trajectory_file_.open(trajectory_output_path_, std::ios::out | std::ios::trunc);
+    if (!trajectory_file_.is_open()) {
+      throw std::runtime_error("failed to open trajectory_output_path: " +
+                               trajectory_output_path_);
+    }
+    RCLCPP_INFO(get_logger(), "recording trajectory to %s",
+                trajectory_output_path_.c_str());
+  }
+
   debug_snapshot_srv_ = create_service<std_srvs::srv::Trigger>(
       "/basalt/get_debug_snapshot",
       std::bind(&BasaltNode::handleDebugSnapshot, this, std::placeholders::_1,
                 std::placeholders::_2));
 
-  const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double>(1.0 / publish_rate_hz_));
-  state_timer_ = create_wall_timer(
-      period, std::bind(&BasaltNode::processQueuesAndPublish, this));
+  optical_flow_thread_ =
+      std::thread(&BasaltNode::opticalFlowOutputLoop, this);
+  estimator_thread_ =
+      std::thread(&BasaltNode::estimatorOutputLoop, this);
 
   RCLCPP_INFO(get_logger(), "subscriptions/publisher ready");
 }
@@ -155,6 +171,7 @@ BasaltNode::~BasaltNode() {
   shutting_down_ = true;
 
   try {
+    latest_imu_cv_.notify_all();
     if (opt_flow_) {
       opt_flow_->input_queue.push(nullptr);
     }
@@ -165,8 +182,20 @@ BasaltNode::~BasaltNode() {
       vio_->maybe_join();
       vio_->drain_input_queues();
     }
+    opt_flow_out_queue_.push(nullptr);
+    out_state_queue_.push(nullptr);
+    if (optical_flow_thread_.joinable()) {
+      optical_flow_thread_.join();
+    }
+    if (estimator_thread_.joinable()) {
+      estimator_thread_.join();
+    }
     basalt::PoseVelBiasState<double>::Ptr state;
     while (out_state_queue_.try_pop(state)) {
+    }
+    if (trajectory_file_.is_open()) {
+      trajectory_file_.flush();
+      trajectory_file_.close();
     }
   } catch (const std::exception &e) {
     RCLCPP_ERROR(get_logger(), "shutdown error: %s", e.what());
@@ -194,22 +223,26 @@ int64_t BasaltNode::imageTimestampNs(
   return steadyNowNs();
 }
 
-int64_t BasaltNode::nextMonotonicImageTimeNs(int64_t candidate_ns) {
+bool BasaltNode::acceptImageTimestampNs(int64_t candidate_ns,
+                                        int64_t &accepted_ns) {
   std::lock_guard<std::mutex> lock(timestamp_mutex_);
   if (candidate_ns <= last_image_t_ns_) {
-    candidate_ns = last_image_t_ns_ + 1;
+    return false;
   }
   last_image_t_ns_ = candidate_ns;
-  return candidate_ns;
+  accepted_ns = candidate_ns;
+  return true;
 }
 
-int64_t BasaltNode::nextMonotonicImuTimeNs(int64_t candidate_ns) {
+bool BasaltNode::acceptImuTimestampNs(int64_t candidate_ns,
+                                      int64_t &accepted_ns) {
   std::lock_guard<std::mutex> lock(timestamp_mutex_);
   if (candidate_ns <= last_imu_input_t_ns_) {
-    candidate_ns = last_imu_input_t_ns_ + 1;
+    return false;
   }
   last_imu_input_t_ns_ = candidate_ns;
-  return candidate_ns;
+  accepted_ns = candidate_ns;
+  return true;
 }
 
 std::array<double, 36> BasaltNode::defaultCovariance(double linear,

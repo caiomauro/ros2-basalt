@@ -10,6 +10,9 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>rosgraph_msgs</depend>
+  <depend>rosbag2_py</depend>
   <depend>geometry_msgs</depend>
   <depend>message_filters</depend>
   <depend>nav_msgs</depend>

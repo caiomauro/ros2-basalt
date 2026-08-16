@@ -1,4 +1,4 @@
-name: build
+name: build-and-test
 
 on:
   pull_request:
@@ -44,7 +44,46 @@ jobs:
           source /opt/ros/humble/setup.bash
           rosdep install --from-paths . --ignore-src -r -y
 
-      - name: Build basalt_wrapper
+      - name: Build pinned Basalt dependency
+        run: ./scripts/setup_basalt.sh
+
+      - name: Build and test basalt_wrapper
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --base-paths . --packages-select basalt_wrapper --cmake-clean-cache
+          colcon build --base-paths . --packages-select basalt_wrapper \
+            --cmake-clean-cache --event-handlers console_direct+
+          colcon test --base-paths . --packages-select basalt_wrapper \
+            --event-handlers console_direct+
+          colcon test-result --verbose
+
+      - name: Smoke-test the installed node
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          export ROS_LOCALHOST_ONLY=1
+          set +e
+          timeout --signal=INT --kill-after=10s 5s \
+            install/basalt_wrapper/lib/basalt_wrapper/basalt_node \
+            --ros-args \
+            -p left_image_topic:=/cam0/image_raw \
+            -p right_image_topic:=/cam1/image_raw \
+            -p imu_topic:=/imu0 \
+            -p calib_path:="$GITHUB_WORKSPACE/config/x500_stereo_sim_calib.json" \
+            -p config_path:="$GITHUB_WORKSPACE/config/x500_stereo_sim_safe_config.json" \
+            -p input_mode:=ros_topics > /tmp/basalt_wrapper_smoke.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 124 ]; then
+            cat /tmp/basalt_wrapper_smoke.log
+            exit 1
+          fi
+          grep -F "subscriptions/publisher ready" /tmp/basalt_wrapper_smoke.log
+          grep -F "Finished VIOFilter before first IMU" /tmp/basalt_wrapper_smoke.log
+
+      - name: Verify relocatable runtime paths
+        run: |
+          if readelf -d install/basalt_wrapper/lib/basalt_wrapper/basalt_node \
+            | grep -F "$GITHUB_WORKSPACE"; then
+            echo "Installed basalt_node contains a workspace path" >&2
+            exit 1
+          fi

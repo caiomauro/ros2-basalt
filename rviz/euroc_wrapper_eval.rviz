@@ -4,11 +4,11 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Status1
-        - /Basalt Track1
-        - /Truth Track1
-        - /Geo Corrected Track1
-        - /Camera Previews1
+        - /Ground Truth Path1
+        - /Ground Truth Pose1
+        - /Basalt Path1
+        - /Basalt Pose1
+        - /Tracking Overlay1
       Splitter Ratio: 0.58
   - Class: rviz_common/Selection
     Name: Selection
@@ -30,27 +30,41 @@ Visualization Manager:
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/Path
       Enabled: true
-      Name: Basalt Track
+      Name: Ground Truth Path
+      Topic:
+        Value: /euroc/ground_truth_path
+      Color: 32; 214; 111
+      Line Width: 0.0500000007
+      Buffer Length: 1
+    - Class: rviz_default_plugins/Pose
+      Enabled: true
+      Name: Ground Truth Pose
+      Topic:
+        Value: /euroc/ground_truth_pose
+      Shape: Arrow
+      Color: 46; 204; 113
+      Shaft Length: 0.45
+      Shaft Radius: 0.02
+      Head Length: 0.12
+      Head Radius: 0.05
+    - Class: rviz_default_plugins/Odometry
+      Enabled: false
+      Name: Ground Truth Odometry
+      Topic:
+        Value: /euroc/ground_truth_odometry
+      Shape:
+        Value: Arrow
+      Keep: 35
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Color: 72; 255; 168
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Basalt Path
       Topic:
         Value: /basalt/path
       Color: 255; 176; 32
       Line Width: 0.0900000036
-      Buffer Length: 1
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: Truth Track
-      Topic:
-        Value: /gz/ground_truth_path_raw
-      Color: 0; 214; 255
-      Line Width: 0.0900000036
-      Buffer Length: 1
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: Geo Corrected Track
-      Topic:
-        Value: /geo/corrected_path
-      Color: 80; 255; 120
-      Line Width: 0.1000000015
       Buffer Length: 1
     - Class: rviz_default_plugins/Pose
       Enabled: true
@@ -65,7 +79,7 @@ Visualization Manager:
       Head Radius: 0.055
     - Class: rviz_default_plugins/Odometry
       Enabled: true
-      Name: Basalt Trail
+      Name: Basalt Odometry
       Topic:
         Value: /basalt/odometry
       Shape:
@@ -74,26 +88,24 @@ Visualization Manager:
       Position Tolerance: 0.1
       Angle Tolerance: 0.1
       Color: 255; 196; 64
-    - Class: rviz_default_plugins/Odometry
+    - Class: rviz_default_plugins/Image
       Enabled: true
-      Name: Truth Trail
-      Topic:
-        Value: /gz/ground_truth_odom_raw
-      Shape:
-        Value: Arrow
-      Keep: 35
-      Position Tolerance: 0.1
-      Angle Tolerance: 0.1
-      Color: 64; 220; 255
-    - Class: rviz_default_plugins/PointCloud
+      Name: Tracking Overlay
+      Image Topic:
+        Value: /basalt/tracking_overlay
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
+    - Class: rviz_default_plugins/Image
       Enabled: false
-      Name: Pose Cloud
-      Topic:
-        Value: /basalt/pose_cloud
-      Style: Flat Squares
-      Size (Pixels): 2
-      Size (m): 0.035
-      Color: 82; 160; 255
+      Name: Tracking Image
+      Image Topic:
+        Value: /basalt/tracking_image
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
     - Class: rviz_default_plugins/PointCloud
       Enabled: false
       Name: Tracked Points
@@ -103,9 +115,6 @@ Visualization Manager:
       Size (Pixels): 2
       Size (m): 0.015
       Color: 255; 236; 92
-    - Class: basalt_wrapper/CameraPreviews
-      Enabled: true
-      Name: Camera Previews
   Enabled: true
   Global Options:
     Background Color: 24; 26; 31
@@ -117,22 +126,13 @@ Visualization Manager:
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
-    - Class: rviz_default_plugins/SetInitialPose
-      Topic:
-        Value: /initialpose
-    - Class: rviz_default_plugins/SetGoal
-      Topic:
-        Value: /goal_pose
-    - Class: rviz_default_plugins/PublishPoint
-      Topic:
-        Value: /clicked_point
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 10
+      Distance: 6
       Focal Point:
-        X: 1.2
-        Y: 1.4
-        Z: 0.7
-      Pitch: 0.94
-      Yaw: 0.62
+        X: 0.0
+        Y: 0.0
+        Z: 0.0
+      Pitch: 0.8
+      Yaw: 0.6

@@ -1,0 +1,10 @@
+<library path="camera_preview_display">
+  <class
+    name="basalt_wrapper/CameraPreviews"
+    type="basalt_wrapper::CameraPreviewDisplay"
+    base_class_type="rviz_common::Display">
+    <description>
+      Three equal-height camera previews docked to the right side of RViz.
+    </description>
+  </class>
+</library>

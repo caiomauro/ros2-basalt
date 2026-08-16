@@ -4,10 +4,21 @@ log/
 .colcon/
 .vscode/
 .idea/
+.agents/
+.codex/
+.ethernet-fix/
+.github/modernize/
+resource_reports/
 *.user
 *.pyc
 __pycache__/
 compile_commands.json
 *.orig
 *.rej
+*.ubjson
 third_party/basalt/
+
+# Local investigation and cross-package planning notes are intentionally not
+# part of the public ROS wrapper repository.
+handoff.md
+NAVIGATION_STACK_PACKAGING_PLAN.md

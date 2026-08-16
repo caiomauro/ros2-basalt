@@ -5,11 +5,15 @@
 - ROS 2 Humble
 - Ubuntu 22.04
 - Python 3 with `pip`
-- Basalt built locally and discoverable through `BASALT_ROOT` or `~/basalt`
+- CMake 3.24 or newer
+- Basalt built by `scripts/setup_basalt.sh` or discoverable through `BASALT_ROOT`
 
 ## Build
 
 ```bash
+cd ~/ros2_ws/src/basalt_wrapper
+./scripts/setup_basalt.sh
+
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select basalt_wrapper --cmake-clean-cache
@@ -42,6 +46,7 @@ Changes that should stay in separate packages:
 ## Before Opening a PR
 
 - make sure the package builds in a clean ROS 2 workspace
+- run `colcon test --packages-select basalt_wrapper` and inspect `colcon test-result --verbose`
 - update `README.md` if user-facing behavior changes
 - keep launch files and parameter presets in sync
 - avoid introducing machine-specific absolute paths except clearly marked placeholders

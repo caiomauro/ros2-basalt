@@ -27,27 +27,55 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 
-#include "basalt_wrapper/basalt_node.hpp"
+#pragma once
 
-#include <rclcpp/executors/multi_threaded_executor.hpp>
+#include <QImage>
 
-int main(int argc, char **argv) {
-  rclcpp::init(argc, argv);
+#include <array>
+#include <memory>
 
-  try {
-    auto node = std::make_shared<BasaltNode>();
-    // One worker services the latency-sensitive IMU group while the others
-    // handle full-resolution stereo and low-rate control/debug callbacks.
-    rclcpp::executors::MultiThreadedExecutor executor(
-        rclcpp::ExecutorOptions(), 3);
-    executor.add_node(node);
-    executor.spin();
-  } catch (const std::exception &e) {
-    RCLCPP_FATAL(rclcpp::get_logger("basalt_node"), "%s", e.what());
-    rclcpp::shutdown();
-    return 1;
-  }
+#include <rclcpp/rclcpp.hpp>
+#include <rviz_common/display.hpp>
+#include <sensor_msgs/msg/image.hpp>
 
-  rclcpp::shutdown();
-  return 0;
+class QLabel;
+class QWidget;
+
+namespace rviz_common
+{
+class PanelDockWidget;
 }
+
+namespace basalt_wrapper
+{
+
+class CameraPreviewDisplay : public rviz_common::Display
+{
+  Q_OBJECT
+
+public:
+  CameraPreviewDisplay();
+  ~CameraPreviewDisplay() override;
+
+  void onInitialize() override;
+  void update(float wall_dt, float ros_dt) override;
+  void reset() override;
+
+protected:
+  void onEnable() override;
+  void onDisable() override;
+
+private:
+  void startSubscriptions();
+  void stopSubscriptions();
+  void imageCallback(sensor_msgs::msg::Image::ConstSharedPtr msg, std::size_t index);
+
+  QWidget * pane_{nullptr};
+  rviz_common::PanelDockWidget * dock_{nullptr};
+  std::array<QLabel *, 3> image_labels_{{nullptr, nullptr, nullptr}};
+  std::array<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr, 3> subscriptions_;
+  std::array<std::size_t, 3> frame_counts_{{0, 0, 0}};
+  rclcpp::Node::SharedPtr node_;
+};
+
+}  // namespace basalt_wrapper

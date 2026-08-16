@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">ros2-basalt</title>
+  <desc id="desc">Deterministic visual-inertial odometry for ROS 2</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071426"/>
+      <stop offset="0.55" stop-color="#10294a"/>
+      <stop offset="1" stop-color="#211a48"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#47d7ff"/>
+      <stop offset="0.52" stop-color="#6e8bff"/>
+      <stop offset="1" stop-color="#a970ff"/>
+    </linearGradient>
+    <radialGradient id="orb">
+      <stop offset="0" stop-color="#5de1ff" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#5de1ff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#9fc7ff" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" rx="26" fill="url(#bg)"/>
+  <rect width="1200" height="360" rx="26" fill="url(#grid)"/>
+  <circle cx="995" cy="60" r="235" fill="url(#orb)"/>
+  <circle cx="75" cy="335" r="180" fill="url(#orb)" opacity="0.45"/>
+
+  <g transform="translate(72 70)">
+    <text x="0" y="72" fill="#f5f9ff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="69" font-weight="700" letter-spacing="-4">ros2-basalt</text>
+    <rect x="2" y="93" width="535" height="5" rx="2.5" fill="url(#accent)"/>
+    <text x="2" y="142" fill="#b9cbea" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" letter-spacing="0.5">DETERMINISTIC VISUAL-INERTIAL ODOMETRY</text>
+    <text x="2" y="182" fill="#7fdfff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19">stereo + imu  →  basalt  →  ROS 2 odometry</text>
+  </g>
+
+  <g transform="translate(745 55)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 210 C105 130 170 250 300 100" fill="none" stroke="#54ddff" stroke-opacity="0.24" stroke-width="14" filter="url(#glow)"/>
+    <path d="M40 210 C105 130 170 250 300 100" fill="none" stroke="url(#accent)" stroke-width="4"/>
+
+    <g transform="translate(5 58)">
+      <rect width="94" height="66" rx="14" fill="#0b1b32" stroke="#58dcff" stroke-width="3"/>
+      <circle cx="47" cy="33" r="19" fill="#0f3351" stroke="#8ceaff" stroke-width="3"/>
+      <circle cx="47" cy="33" r="7" fill="#91ecff"/>
+      <path d="M94 19 L115 8 V58 L94 47" fill="#143454" stroke="#58dcff" stroke-width="3"/>
+    </g>
+    <g transform="translate(5 148)">
+      <rect width="94" height="66" rx="14" fill="#0b1b32" stroke="#8b79ff" stroke-width="3"/>
+      <circle cx="47" cy="33" r="19" fill="#25275b" stroke="#b6a9ff" stroke-width="3"/>
+      <circle cx="47" cy="33" r="7" fill="#b9adff"/>
+      <path d="M94 19 L115 8 V58 L94 47" fill="#29285d" stroke="#8b79ff" stroke-width="3"/>
+    </g>
+
+    <path d="M120 92 L238 145 M120 182 L238 145" stroke="#8398c7" stroke-opacity="0.55" stroke-width="2" stroke-dasharray="7 8"/>
+    <circle cx="238" cy="145" r="12" fill="#aa7cff" stroke="#e2d7ff" stroke-width="3" filter="url(#glow)"/>
+
+    <g transform="translate(276 40)">
+      <path d="M34 0 L64 17 V51 L34 68 4 51 V17 Z" fill="#111f3b" stroke="#62dcff" stroke-width="3"/>
+      <path d="M34 13 V55 M14 24 L54 44 M54 24 L14 44" stroke="#8feaff" stroke-width="2"/>
+      <circle cx="34" cy="34" r="7" fill="#a879ff"/>
+    </g>
+
+    <circle cx="40" cy="210" r="7" fill="#55dcff"/>
+    <circle cx="150" cy="198" r="6" fill="#728fff"/>
+    <circle cx="300" cy="100" r="8" fill="#ae76ff"/>
+  </g>
+
+  <rect x="0.75" y="0.75" width="1198.5" height="358.5" rx="25.25" fill="none" stroke="#9fbdff" stroke-opacity="0.18" stroke-width="1.5"/>
+</svg>

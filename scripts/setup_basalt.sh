@@ -7,6 +7,7 @@ THIRD_PARTY_DIR="${REPO_ROOT}/third_party"
 BASALT_DIR="${THIRD_PARTY_DIR}/basalt"
 BASALT_REPO_URL="https://github.com/VladyslavUsenko/basalt.git"
 BASALT_COMMIT="0f3b2b52c807f70ff4e2973ce253c73329eea7bc"
+BASALT_WRAPPER_PATCH="${REPO_ROOT}/patches/basalt_global_position_factors.patch"
 MIN_CMAKE_VERSION="3.24.0"
 
 version_ge() {
@@ -26,21 +27,9 @@ ensure_modern_cmake() {
     return 0
   fi
 
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "cmake >= ${MIN_CMAKE_VERSION} is required and python3 is not available to bootstrap it." >&2
-    exit 1
-  fi
-
-  echo "Installing a newer cmake via pip because system cmake is too old..." >&2
-  python3 -m pip install --user "cmake>=${MIN_CMAKE_VERSION},<4"
-
-  local user_cmake="${HOME}/.local/bin/cmake"
-  if [[ ! -x "${user_cmake}" ]]; then
-    echo "Failed to install cmake via pip at ${user_cmake}" >&2
-    exit 1
-  fi
-
-  printf '%s' "${user_cmake}"
+  echo "cmake >= ${MIN_CMAKE_VERSION} is required (found '${cmake_version:-none}')." >&2
+  echo "Install a newer CMake, for example with: python3 -m pip install --user 'cmake>=${MIN_CMAKE_VERSION},<4'" >&2
+  exit 1
 }
 
 require_command() {
@@ -66,6 +55,10 @@ require_command python3 "apt install python3"
 NINJA_BIN="$(command -v ninja)"
 CC_BIN="$(command -v cc)"
 CXX_BIN="$(command -v c++)"
+BUILD_JOBS="${BASALT_BUILD_JOBS:-$(nproc)}"
+if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
+  BUILD_JOBS="${BASALT_BUILD_JOBS:-2}"
+fi
 
 trim_wrapper_unneeded_vcpkg_deps() {
   local manifest_path="${BASALT_DIR}/vcpkg.json"
@@ -102,25 +95,40 @@ if [[ ! -d "${BASALT_DIR}/.git" ]]; then
   git clone --recursive "${BASALT_REPO_URL}" "${BASALT_DIR}"
 fi
 
-git -C "${BASALT_DIR}" fetch --tags --force origin
-git -C "${BASALT_DIR}" checkout "${BASALT_COMMIT}"
+if ! git -C "${BASALT_DIR}" cat-file -e "${BASALT_COMMIT}^{commit}" 2>/dev/null; then
+  git -C "${BASALT_DIR}" fetch --tags --force origin
+fi
+git -C "${BASALT_DIR}" checkout --detach "${BASALT_COMMIT}"
 git -C "${BASALT_DIR}" submodule update --init --recursive
+
+if git -C "${BASALT_DIR}" apply --reverse --check "${BASALT_WRAPPER_PATCH}"; then
+  echo "basalt_wrapper estimator patch is already applied"
+else
+  git -C "${BASALT_DIR}" apply --check "${BASALT_WRAPPER_PATCH}"
+  git -C "${BASALT_DIR}" apply "${BASALT_WRAPPER_PATCH}"
+  echo "Applied basalt_wrapper estimator patch"
+fi
 
 # The ROS 2 wrapper only needs Basalt core/library functionality. Upstream's
 # full manifest includes device support such as realsense2, which is not
 # required here and is a common source of Ubuntu build failures.
 trim_wrapper_unneeded_vcpkg_deps
 
-if [[ -x "${BASALT_DIR}/thirdparty/vcpkg/bootstrap-vcpkg.sh" ]] && [[ ! -x "${BASALT_DIR}/thirdparty/vcpkg/vcpkg" ]]; then
-  "${BASALT_DIR}/thirdparty/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+if [[ -x "${BASALT_DIR}/thirdparty/vcpkg/bootstrap-vcpkg.sh" ]]; then
+  if [[ ! -x "${BASALT_DIR}/thirdparty/vcpkg/vcpkg" ]] \
+      || ! "${BASALT_DIR}/thirdparty/vcpkg/vcpkg" version >/dev/null 2>&1; then
+    rm -f "${BASALT_DIR}/thirdparty/vcpkg/vcpkg"
+    "${BASALT_DIR}/thirdparty/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+  fi
 fi
 
 "${CMAKE_BIN}" --preset relwithdebinfo \
   -S "${BASALT_DIR}" \
   -B "${BASALT_DIR}/build/relwithdebinfo" \
+  -DCXX_MARCH="${BASALT_CXX_MARCH:-native}" \
   -DCMAKE_MAKE_PROGRAM="${NINJA_BIN}" \
   -DCMAKE_C_COMPILER="${CC_BIN}" \
   -DCMAKE_CXX_COMPILER="${CXX_BIN}"
-"${CMAKE_BIN}" --build "${BASALT_DIR}/build/relwithdebinfo" -j"$(nproc)"
+"${CMAKE_BIN}" --build "${BASALT_DIR}/build/relwithdebinfo" -j"${BUILD_JOBS}"
 
 echo "Basalt is ready at ${BASALT_DIR}"

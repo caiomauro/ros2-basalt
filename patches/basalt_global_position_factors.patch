@@ -1,0 +1,348 @@
+diff --git a/include/basalt/vi_estimator/sqrt_keypoint_vio.h b/include/basalt/vi_estimator/sqrt_keypoint_vio.h
+index 69494db..6c31752 100644
+--- a/include/basalt/vi_estimator/sqrt_keypoint_vio.h
++++ b/include/basalt/vi_estimator/sqrt_keypoint_vio.h
+@@ -127,6 +127,18 @@ class SqrtKeypointVioEstimator : public VioEstimatorBase,
+                    const std::unordered_set<KeypointId>& lost_landmaks);
+   void optimize();
+ 
++  struct GlobalPositionFactor {
++    int64_t state_t_ns{0};
++    Vec3 position{Vec3::Zero()};
++    Eigen::Matrix<Scalar, 3, 3> information{
++        Eigen::Matrix<Scalar, 3, 3>::Identity()};
++  };
++
++  void ingestGlobalPositionMeasurements();
++  Scalar computeGlobalPositionError() const;
++  void linearizeGlobalPositionFactors(const AbsOrderMap& aom, MatX& H,
++                                      VecX& b, Scalar& error) const;
++
+   void debug_finalize() override;
+ 
+   void logMargNullspace();
+@@ -252,6 +264,9 @@ class SqrtKeypointVioEstimator : public VioEstimatorBase,
+   constexpr static Scalar initial_vee = Scalar(2.0);
+   Scalar lambda, min_lambda, max_lambda, lambda_vee;
+ 
++  Eigen::aligned_vector<GlobalPositionFactor> global_position_factors;
++  std::set<int64_t> global_position_measurement_ids;
++
+   std::shared_ptr<std::thread> processing_thread;
+ 
+   // timing and stats
+diff --git a/include/basalt/vi_estimator/vio_estimator.h b/include/basalt/vi_estimator/vio_estimator.h
+index 9b755a0..dadb873 100644
+--- a/include/basalt/vi_estimator/vio_estimator.h
++++ b/include/basalt/vi_estimator/vio_estimator.h
+@@ -41,6 +41,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ namespace basalt {
+ 
++struct GlobalPositionMeasurement {
++  typedef std::shared_ptr<GlobalPositionMeasurement> Ptr;
++
++  int64_t t_ns{0};
++  Eigen::Vector3d position{Eigen::Vector3d::Zero()};
++  Eigen::Matrix3d covariance{Eigen::Matrix3d::Identity()};
++
++  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
++};
++
+ struct VioVisualizationData {
+   typedef std::shared_ptr<VioVisualizationData> Ptr;
+ 
+@@ -69,6 +79,7 @@ class VioEstimatorBase {
+         out_vis_queue(nullptr) {
+     vision_data_queue.set_capacity(10);
+     imu_data_queue.set_capacity(300);
++    global_position_queue.set_capacity(100);
+     last_processed_t_ns = 0;
+     finished = false;
+   }
+@@ -78,6 +89,8 @@ class VioEstimatorBase {
+ 
+   tbb::concurrent_bounded_queue<OpticalFlowResult::Ptr> vision_data_queue;
+   tbb::concurrent_bounded_queue<ImuData<double>::Ptr> imu_data_queue;
++  tbb::concurrent_bounded_queue<GlobalPositionMeasurement::Ptr>
++      global_position_queue;
+ 
+   tbb::concurrent_bounded_queue<PoseVelBiasState<double>::Ptr>*
+       out_state_queue = nullptr;
+@@ -119,6 +132,11 @@ class VioEstimatorBase {
+ 
+   virtual void addIMUToQueue(const ImuData<double>::Ptr& data) = 0;
+   virtual void addVisionToQueue(const OpticalFlowResult::Ptr& data) = 0;
++
++  inline void addGlobalPositionMeasurement(
++      const GlobalPositionMeasurement::Ptr& data) {
++    global_position_queue.emplace(data);
++  }
+ };
+ 
+ class VioEstimatorFactory {
+diff --git a/src/vi_estimator/sqrt_keypoint_vio.cpp b/src/vi_estimator/sqrt_keypoint_vio.cpp
+index 55984fc..39e18e6 100644
+--- a/src/vi_estimator/sqrt_keypoint_vio.cpp
++++ b/src/vi_estimator/sqrt_keypoint_vio.cpp
+@@ -52,10 +52,116 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <tbb/parallel_for.h>
+ #include <tbb/parallel_reduce.h>
+ 
++#include <algorithm>
+ #include <chrono>
++#include <cmath>
++#include <cstdlib>
++#include <limits>
+ 
+ namespace basalt {
+ 
++template <class Scalar_>
++void SqrtKeypointVioEstimator<Scalar_>::ingestGlobalPositionMeasurements() {
++  GlobalPositionMeasurement::Ptr measurement;
++  while (global_position_queue.try_pop(measurement)) {
++    if (!measurement || measurement->t_ns <= 0 ||
++        global_position_measurement_ids.count(measurement->t_ns) > 0 ||
++        !measurement->position.allFinite() ||
++        !measurement->covariance.allFinite()) {
++      continue;
++    }
++
++    int64_t best_t_ns = 0;
++    int64_t best_dt_ns = std::numeric_limits<int64_t>::max();
++    const auto consider = [&](int64_t candidate_t_ns) {
++      const int64_t dt_ns = std::llabs(candidate_t_ns - measurement->t_ns);
++      if (dt_ns < best_dt_ns) {
++        best_dt_ns = dt_ns;
++        best_t_ns = candidate_t_ns;
++      }
++    };
++    for (const auto& kv : frame_poses) consider(kv.first);
++    for (const auto& kv : frame_states) consider(kv.first);
++
++    // VPC publishes a position for an exact Basalt state. A small tolerance
++    // permits output throttling and serialization jitter without attaching a
++    // delayed global observation to an unrelated aircraft pose.
++    constexpr int64_t kMaxAssociationNs = 250000000;
++    if (best_t_ns == 0 || best_dt_ns > kMaxAssociationNs) continue;
++
++    Eigen::Matrix3d covariance = measurement->covariance;
++    covariance.diagonal() = covariance.diagonal().cwiseMax(1e-4);
++    Eigen::LDLT<Eigen::Matrix3d> ldlt(covariance);
++    if (ldlt.info() != Eigen::Success) continue;
++
++    GlobalPositionFactor factor;
++    factor.state_t_ns = best_t_ns;
++    factor.position = measurement->position.template cast<Scalar>();
++    factor.information =
++        ldlt.solve(Eigen::Matrix3d::Identity()).template cast<Scalar>();
++    if (!factor.information.allFinite()) continue;
++
++    global_position_factors.emplace_back(factor);
++    global_position_measurement_ids.emplace(measurement->t_ns);
++  }
++}
++
++template <class Scalar_>
++Scalar_ SqrtKeypointVioEstimator<Scalar_>::computeGlobalPositionError() const {
++  Scalar error = 0;
++  constexpr Scalar kHuber = Scalar(3.0);
++  for (const auto& factor : global_position_factors) {
++    Vec3 position;
++    auto state_it = frame_states.find(factor.state_t_ns);
++    auto pose_it = frame_poses.find(factor.state_t_ns);
++    if (state_it != frame_states.end()) {
++      position = state_it->second.getState().T_w_i.translation();
++    } else if (pose_it != frame_poses.end()) {
++      position = pose_it->second.getPose().translation();
++    } else {
++      continue;
++    }
++    const Vec3 residual = position - factor.position;
++    const Scalar squared = residual.dot(factor.information * residual);
++    const Scalar norm = std::sqrt(std::max(Scalar(0), squared));
++    error += norm <= kHuber ? squared
++                            : Scalar(2) * kHuber * norm - kHuber * kHuber;
++  }
++  return error;
++}
++
++template <class Scalar_>
++void SqrtKeypointVioEstimator<Scalar_>::linearizeGlobalPositionFactors(
++    const AbsOrderMap& aom, MatX& H, VecX& b, Scalar& error) const {
++  constexpr Scalar kHuber = Scalar(3.0);
++  for (const auto& factor : global_position_factors) {
++    const auto order_it = aom.abs_order_map.find(factor.state_t_ns);
++    if (order_it == aom.abs_order_map.end()) continue;
++
++    Vec3 position;
++    auto state_it = frame_states.find(factor.state_t_ns);
++    auto pose_it = frame_poses.find(factor.state_t_ns);
++    if (state_it != frame_states.end()) {
++      position = state_it->second.getState().T_w_i.translation();
++    } else if (pose_it != frame_poses.end()) {
++      position = pose_it->second.getPose().translation();
++    } else {
++      continue;
++    }
++
++    const Vec3 residual = position - factor.position;
++    const Scalar squared = residual.dot(factor.information * residual);
++    const Scalar norm = std::sqrt(std::max(Scalar(0), squared));
++    const Scalar weight = norm <= kHuber ? Scalar(1) : kHuber / norm;
++    const auto weighted_information = weight * factor.information;
++    const int idx = order_it->second.first;
++    H.template block<3, 3>(idx, idx) += weighted_information;
++    b.template segment<3>(idx) += weighted_information * residual;
++    error += norm <= kHuber ? squared
++                            : Scalar(2) * kHuber * norm - kHuber * kHuber;
++  }
++}
++
+ template <class Scalar_>
+ SqrtKeypointVioEstimator<Scalar_>::SqrtKeypointVioEstimator(
+     const Eigen::Vector3d& g_, const basalt::Calibration<double>& calib_,
+@@ -162,7 +268,14 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_,
+     const Vec3 gyro_cov = calib.dicrete_time_gyro_noise_std().array().square();
+ 
+     typename ImuData<Scalar>::Ptr data = popFromImuDataQueue();
+-    BASALT_ASSERT_MSG(data, "first IMU measurment is nullptr");
++    if (!data) {
++      if (out_vis_queue) out_vis_queue->push(nullptr);
++      if (out_marg_queue) out_marg_queue->push(nullptr);
++      if (out_state_queue) out_state_queue->push(nullptr);
++      finished = true;
++      std::cout << "Finished VIOFilter before first IMU" << std::endl;
++      return;
++    }
+ 
+     data->accel = calib.calib_accel_bias.getCalibrated(data->accel);
+     data->gyro = calib.calib_gyro_bias.getCalibrated(data->gyro);
+@@ -739,6 +852,53 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(
+         lqr->get_dense_H_b(Q2Jp_or_H, Q2r_or_b);
+       }
+ 
++      // Keep accepted VPC/global-position information when its associated
++      // state leaves the fixed-lag window. Basalt's visual/IMU linearization
++      // is augmented before the same square-root marginalization step, so the
++      // constraint becomes part of the retained prior instead of disappearing.
++      if (is_lin_sqrt && marg_data.is_sqrt) {
++        constexpr Scalar kHuber = Scalar(3.0);
++        for (const auto& factor : global_position_factors) {
++          const auto order_it = aom.abs_order_map.find(factor.state_t_ns);
++          if (order_it == aom.abs_order_map.end()) continue;
++          Vec3 position;
++          auto state_it = frame_states.find(factor.state_t_ns);
++          auto pose_it = frame_poses.find(factor.state_t_ns);
++          if (state_it != frame_states.end()) {
++            position = state_it->second.getState().T_w_i.translation();
++          } else if (pose_it != frame_poses.end()) {
++            position = pose_it->second.getPose().translation();
++          } else {
++            continue;
++          }
++          const Vec3 residual = position - factor.position;
++          const Scalar squared = residual.dot(factor.information * residual);
++          const Scalar norm = std::sqrt(std::max(Scalar(0), squared));
++          const Scalar weight = norm <= kHuber ? Scalar(1) : kHuber / norm;
++          Eigen::LLT<Eigen::Matrix<Scalar, 3, 3>> llt(
++              weight * factor.information);
++          if (llt.info() != Eigen::Success) continue;
++          const Eigen::Matrix<Scalar, 3, 3> sqrt_information =
++              llt.matrixL().transpose();
++          const Eigen::Index old_rows = Q2Jp_or_H.rows();
++          Q2Jp_or_H.conservativeResize(old_rows + 3, Eigen::NoChange);
++          Q2Jp_or_H.bottomRows(3).setZero();
++          Q2Jp_or_H.template block<3, 3>(
++              old_rows, order_it->second.first) = sqrt_information;
++          Q2r_or_b.conservativeResize(old_rows + 3);
++          Q2r_or_b.template tail<3>() = sqrt_information * residual;
++        }
++      } else {
++        MatX global_H;
++        VecX global_b;
++        Scalar ignored_error = 0;
++        global_H.setZero(aom.total_size, aom.total_size);
++        global_b.setZero(aom.total_size);
++        linearizeGlobalPositionFactors(aom, global_H, global_b, ignored_error);
++        Q2Jp_or_H += global_H;
++        Q2r_or_b += global_b;
++      }
++
+       stats_sums_.add("marg_linearize", t_linearize.elapsed()).format("ms");
+     }
+ 
+@@ -927,6 +1087,14 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(
+       prev_opt_flow_res.erase(id);
+     }
+ 
++    global_position_factors.erase(
++        std::remove_if(global_position_factors.begin(),
++                       global_position_factors.end(), [&](const auto& factor) {
++                         return frame_poses.count(factor.state_t_ns) == 0 &&
++                                frame_states.count(factor.state_t_ns) == 0;
++                       }),
++        global_position_factors.end());
++
+     lmdb.removeKeyframes(kfs_to_marg, poses_to_marg, states_to_marg_all);
+ 
+     if (config.vio_marg_lost_landmarks) {
+@@ -1010,6 +1178,8 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(
+ 
+ template <class Scalar_>
+ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
++  ingestGlobalPositionMeasurements();
++
+   if (config.vio_debug) {
+     std::cout << "=================================" << std::endl;
+   }
+@@ -1100,6 +1270,7 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
+       }
+ 
+       Scalar error_total = 0;
++      Scalar global_position_error = 0;
+       VecX Jp_column_norm2;
+ 
+       {
+@@ -1132,6 +1303,14 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
+         stats.add("performQR", t.reset()).format("ms");
+       }
+ 
++      MatX global_H;
++      VecX global_b;
++      global_H.setZero(aom.total_size, aom.total_size);
++      global_b.setZero(aom.total_size);
++      linearizeGlobalPositionFactors(aom, global_H, global_b,
++                                     global_position_error);
++      error_total += global_position_error;
++
+       if (config.vio_debug) {
+         // TODO: num_points debug output missing
+         std::cout << "[LINEARIZE] Error: " << error_total << " num points "
+@@ -1202,6 +1381,9 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
+ 
+           lqr->get_dense_H_b(H, b);
+ 
++          H += global_H;
++          b += global_b;
++
+           stats.add("get_dense_H_b", t.reset()).format("ms");
+ 
+           int iter = 0;
+@@ -1243,6 +1425,7 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
+ 
+           Timer t;
+           l_diff = lqr->backSubstitute(inc);
++          l_diff += computeModelCostChange(global_H, global_b, inc);
+           stats.add("backSubstitute", t.reset()).format("ms");
+         }
+ 
+@@ -1283,6 +1466,8 @@ void SqrtKeypointVioEstimator<Scalar_>::optimize() {
+ 
+           after_update_vision_and_inertial_error +=
+               after_update_imu_error + after_bg_error + after_ba_error;
++          after_update_vision_and_inertial_error +=
++              computeGlobalPositionError();
+ 
+           stats.add("computerError2", t.reset()).format("ms");
+         }

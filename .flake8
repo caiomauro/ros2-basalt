@@ -1,5 +1,9 @@
 [flake8]
 max-line-length = 120
+# Keep CI deterministic when hosted runners have unrelated third-party Flake8
+# plugins installed globally. Docstrings and copyright are checked separately
+# by ament_pep257 and ament_copyright.
+select = E,F,W,C90
 extend-ignore = E203,W503
 per-file-ignores =
     scripts/track_stack_resources.py:E402,E501
